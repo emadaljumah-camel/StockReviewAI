@@ -1,0 +1,8 @@
+lmstudio:
+  endpoint: "http://127.0.0.1:1234/v1/chat/completions"
+  model: "qwen_qwen3-vl-32b-instruct"
+  timeout_seconds: 120
+  retries: 2
+
+server:
+  log_file: "StockReviewAI.server.log"

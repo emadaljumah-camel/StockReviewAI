@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Logs and local runtime output
+*.log
+server/StockReviewAI.server.log
+StockReviewAI.lrplugin/StockReviewAI.log
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
