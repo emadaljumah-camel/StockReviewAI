@@ -6,6 +6,7 @@ return {
     LrPluginName = "02 Stock Review AI",
 
     LrPluginInfoUrl = "https://localhost/stockreviewai",
+    LrPluginInfoProvider = "PluginInfoProvider.lua",
 
     LrLibraryMenuItems = {
         {
@@ -16,15 +17,7 @@ return {
             title = "Check Job Status / Apply Results",
             file = "CheckJobStatus.lua",
         },
-        {
-            title = "Open Stock Review AI Settings",
-            file = "OpenSettings.lua",
-        },
-        {
-            title = "Clear AI Review Log",
-            file = "ClearLog.lua",
-        },
     },
 
-    VERSION = { major = 1, minor = 1, revision = 0, build = 1 },
+    VERSION = { major = 1, minor = 1, revision = 0, build = 2 },
 }

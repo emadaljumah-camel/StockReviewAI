@@ -28,9 +28,10 @@ StockReviewAI/
 - `Json.lua` - bundled Lua 5.1 JSON encoder/decoder used when Lightroom has no JSON namespace
 - `Prompt.lua` - legacy stock-review prompt kept for backwards compatibility
 - `Settings.lua` - plugin preferences dialog backed by `LrPrefs`
+- `PluginInfoProvider.lua` - Plug-in Manager settings and maintenance actions
 - `Utils.lua` - logging and shared helpers
-- `ReviewSelected.lua`, `CheckJobStatus.lua`, `OpenSettings.lua`, and
-  `ClearLog.lua` - menu command entry points
+- `ReviewSelected.lua` and `CheckJobStatus.lua` - menu command entry points
+- `OpenSettings.lua` and `ClearLog.lua` - compatibility command entry points
 
 ## Lightroom Install
 
@@ -87,10 +88,10 @@ lmstudio:
 
 ## Plugin Settings
 
-Open:
+Open Lightroom's Plug-in Manager and select `02 Stock Review AI`, then click:
 
 ```text
-Library > Plug-in Extras > Open Stock Review AI Settings
+Open Settings...
 ```
 
 Set:
@@ -386,7 +387,8 @@ The log is written beside the plugin as:
 StockReviewAI.log
 ```
 
-Use `Library > Plug-in Extras > Clear AI Review Log` to delete it.
+In Lightroom's Plug-in Manager, select `02 Stock Review AI` and click
+`Clear AI Review Log` to clear it.
 
 ## Testing Checklist
 
