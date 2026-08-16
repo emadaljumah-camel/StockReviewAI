@@ -7,7 +7,8 @@ local LrPathUtils = import "LrPathUtils"
 local LrProgressScope = import "LrProgressScope"
 local LrTasks = import "LrTasks"
 
-local AiClient = require "AiClient"
+local JobClient = require "JobClient"
+local JobState = require "JobState"
 local Settings = require "Settings"
 local Utils = require "Utils"
 
@@ -73,28 +74,7 @@ local function selectedPhotos(catalog)
     return {}
 end
 
-local function makeTempDir()
-    local dir = LrPathUtils.child(LrPathUtils.getStandardFilePath("temp"), "StockReviewAI")
-    if not LrFileUtils.exists(dir) then
-        LrFileUtils.createAllDirectories(dir)
-    end
-    return dir
-end
-
-local function cleanupOldPreviews()
-    local dir = makeTempDir()
-    for filePath in LrFileUtils.files(dir) do
-        if LrPathUtils.leafName(filePath):match("^stock%-review%-ai%-") then
-            local path = LrPathUtils.child(dir, LrPathUtils.leafName(filePath))
-            if LrFileUtils.exists(path) then
-                LrFileUtils.delete(path)
-            end
-        end
-    end
-end
-
-local function generatePreview(photo, settings, index)
-    local tempDir = makeTempDir()
+local function generatePreview(photo, settings, index, previewDir)
     local uniqueName = "stock-review-ai-" .. tostring(math.floor(LrDate.currentTime())) .. "-" .. tostring(index)
     local exportSession = LrExportSession {
         photosToExport = { photo },
@@ -102,7 +82,7 @@ local function generatePreview(photo, settings, index)
             LR_collisionHandling = "overwrite",
             LR_exportServiceProvider = "com.adobe.ag.export.file",
             LR_export_destinationType = "specificFolder",
-            LR_export_destinationPathPrefix = tempDir,
+            LR_export_destinationPathPrefix = previewDir,
             LR_export_useSubfolder = false,
             LR_format = "JPEG",
             LR_jpeg_quality = settings.jpegQuality / 100,
@@ -133,51 +113,13 @@ local function generatePreview(photo, settings, index)
     return renditionPath
 end
 
-local function shouldApplyFlag(photo, settings)
-    if settings.overwriteFlags then
-        return true
-    end
-
-    local current = photo:getRawMetadata("pickStatus")
-    return current == nil or current == 0
-end
-
-local function flagValueForResult(result, settings)
-    if result.verdict == "YES" then
-        return 1, "pick"
-    end
-
-    return -1, "reject"
-end
-
-local function applyFlag(catalog, photo, result, settings)
-    if settings.dryRun then
-        return "dry-run"
-    end
-
-    if not shouldApplyFlag(photo, settings) then
-        return "skipped-existing-flag"
-    end
-
-    local flagValue, flagName = flagValueForResult(result, settings)
-    catalog:withWriteAccessDo("Stock Review AI Flag", function()
-        photo:setRawMetadata("pickStatus", flagValue)
-    end)
-    return "flagged-" .. flagName
-end
-
-local function removeTempFile(path)
-    if path and LrFileUtils.exists(path) then
-        LrFileUtils.delete(path)
-    end
-end
-
 local function photoPath(photo)
     return photo:getRawMetadata("path") or photo:getFormattedMetadata("fileName") or "Unknown photo"
 end
 
 function Plugin.reviewSelectedPhotos()
     LrTasks.startAsyncTask(function()
+        math.randomseed(os.time())
         local catalog = LrApplication.activeCatalog()
         local photos = selectedPhotos(catalog)
 
@@ -187,105 +129,141 @@ function Plugin.reviewSelectedPhotos()
         end
 
         local settings = Settings.get()
-        cleanupOldPreviews()
+        local active, activeError = JobState.loadActive(settings)
+        if activeError then
+            LrDialogs.message("Stock Review AI", activeError, "critical")
+            return
+        end
+        if active and not active.applied and not active.closed then
+            LrDialogs.message(
+                "Stock Review AI job pending",
+                "Job " .. Utils.safeString(active.job_id)
+                    .. " has not been applied. Use 'Check Job Status / Apply Results' first.",
+                "warning"
+            )
+            return
+        end
+
+        local clientJobId = os.date("%Y%m%d-%H%M%S") .. "-"
+            .. tostring(math.random(100000, 999999))
+        local jobFolder = JobState.createFolder(settings, clientJobId)
+        local previewDir = LrPathUtils.child(jobFolder, "previews")
 
         local progress = LrProgressScope {
             title = "Stock Review AI",
             caption = "Preparing review...",
         }
 
-        local summary = {
-            reviewed = 0,
-            picked = 0,
-            rejected = 0,
-            skipped = 0,
-            errors = 0,
-            dryRun = 0,
+        local manifest = {
+            schema_version = 1,
+            client_job_id = clientJobId,
+            plugin_version = "1.1.0",
+            catalog_path = Utils.safeString(catalog:getPath()),
+            endpoint_url = settings.endpointUrl,
+            dry_run = settings.dryRun,
+            overwrite_flags = settings.overwriteFlags,
+            write_log = settings.writeLog,
+            photos = {},
+            server_photos = {},
         }
 
         for index, photo in ipairs(photos) do
             if progress:isCanceled() then
-                break
+                progress:done()
+                return
             end
 
             local path = photoPath(photo)
             progress:setPortionComplete(index - 1, #photos)
-            progress:setCaption("Reviewing " .. tostring(index) .. " of " .. tostring(#photos) .. ": " .. LrPathUtils.leafName(path))
+            progress:setCaption("Exporting " .. tostring(index) .. " of " .. tostring(#photos) .. ": " .. LrPathUtils.leafName(path))
 
-            local previewPath
-            local ok, resultOrError, status = LrTasks.pcall(function()
-                local generatedPath, previewError = generatePreview(photo, settings, index)
-                previewPath = generatedPath
-                if not generatedPath then
-                    return nil, previewError
-                end
-
-                local locationContext, locationError =
-                    readLocationContext(photo)
-                if locationError then
-                    Utils.logger:warn(
-                        path
-                            .. ": optional location metadata unavailable: "
-                            .. locationError
-                    )
-                end
-
-                local result, aiError = AiClient.reviewPreview(
-                    generatedPath,
-                    settings,
-                    LrPathUtils.leafName(path),
-                    locationContext
-                )
-                if not result then
-                    return nil, aiError
-                end
-
-                local applyStatus = applyFlag(catalog, photo, result, settings)
-                return result, applyStatus
-            end)
-
-            removeTempFile(previewPath)
-
-            if ok and resultOrError then
-                summary.reviewed = summary.reviewed + 1
-                status = status or "reviewed"
-                if status == "dry-run" then
-                    summary.dryRun = summary.dryRun + 1
-                elseif status == "skipped-existing-flag" then
-                    summary.skipped = summary.skipped + 1
-                elseif status == "flagged-pick" then
-                    summary.picked = summary.picked + 1
-                elseif status == "flagged-reject" then
-                    summary.rejected = summary.rejected + 1
-                end
-
-                if settings.writeLog then
-                    Utils.appendLog(Utils.formatResultLine(path, resultOrError, status))
-                end
-            else
-                local message = ok and (status or resultOrError) or tostring(resultOrError)
-                summary.errors = summary.errors + 1
-                Utils.logger:error(path .. ": " .. tostring(message))
-                if settings.writeLog then
-                    Utils.appendLog(Utils.formatResultLine(path, nil, "error", message))
-                end
+            local generatedPath, previewError = generatePreview(
+                photo,
+                settings,
+                index,
+                previewDir
+            )
+            if not generatedPath then
+                progress:done()
+                LrDialogs.message("Stock Review AI export error", previewError, "critical")
+                return
             end
+            local locationContext, locationError = readLocationContext(photo)
+            if locationError then
+                Utils.logger:warn(path .. ": optional location metadata unavailable: " .. locationError)
+            end
+            local rawUuid = photo:getRawMetadata("uuid")
+            local photoId = trimmedString(rawUuid)
+                or ("photo-" .. tostring(photo.localIdentifier or index))
+            local filename = LrPathUtils.leafName(path)
+            manifest.photos[#manifest.photos + 1] = {
+                photo_id = photoId,
+                catalog_uuid = trimmedString(rawUuid),
+                local_identifier = tostring(photo.localIdentifier or ""),
+                filename = filename,
+                original_path = path,
+                preview_path = generatedPath,
+            }
+            manifest.server_photos[#manifest.server_photos + 1] = {
+                photo_id = photoId,
+                catalog_uuid = trimmedString(rawUuid),
+                filename = filename,
+                threshold = math.floor(settings.minimumYesThreshold),
+                location_context = locationContext,
+            }
         end
 
-        progress:setPortionComplete(1)
+        local manifestPath = LrPathUtils.child(jobFolder, "job.json")
+        local saved, saveError = JobState.writeJson(manifestPath, manifest)
+        if not saved then
+            progress:done()
+            LrDialogs.message("Stock Review AI job error", saveError, "critical")
+            return
+        end
+        local activeState = {
+            schema_version = 1,
+            job_id = clientJobId,
+            client_job_id = clientJobId,
+            job_folder = jobFolder,
+            catalog_path = manifest.catalog_path,
+            endpoint_url = settings.endpointUrl,
+            status = "submitting",
+            applied = false,
+            closed = false,
+            submitted_at = os.time(),
+        }
+        local activeSaved, activeSaveError = JobState.saveActive(settings, activeState)
+        if not activeSaved then
+            progress:done()
+            LrDialogs.message("Stock Review AI job error", activeSaveError, "critical")
+            return
+        end
+
+        progress:setCaption("Creating desktop review job...")
+        progress:setPortionComplete(48, 100)
+        local response, submitError = JobClient.submit(settings, manifest, progress)
+        if not response then
+            progress:done()
+            LrDialogs.message(
+                "Stock Review AI submission interrupted",
+                submitError .. "\n\nThe local job is saved. Use 'Check Job Status / Apply Results' to resume submission.",
+                "warning"
+            )
+            return
+        end
+
+        activeState.job_id = response.job_id or clientJobId
+        activeState.status = response.status or "running"
+        JobState.saveActive(settings, activeState)
+        progress:setPortionComplete(100, 100)
         progress:done()
-
-        local details = table.concat({
-            "Reviewed: " .. tostring(summary.reviewed),
-            "Picked: " .. tostring(summary.picked),
-            "Rejected: " .. tostring(summary.rejected),
-            "Skipped existing flags: " .. tostring(summary.skipped),
-            "Dry-run reviewed: " .. tostring(summary.dryRun),
-            "Errors: " .. tostring(summary.errors),
-            "Log: " .. Utils.logPath(),
-        }, "\n")
-
-        LrDialogs.message("Stock Review AI complete", details, summary.errors > 0 and "warning" or "info")
+        LrDialogs.message(
+            "Stock Review AI job submitted",
+            "Job " .. activeState.job_id .. " is stored and processing on the desktop.\n\n"
+                .. "It is now safe to disconnect the laptop. Reconnect later and use "
+                .. "'Check Job Status / Apply Results'.",
+            "info"
+        )
     end)
 end
 

@@ -27,6 +27,8 @@ local function base64Encode(data)
     end) .. ({ "", "==", "=" })[#data % 3 + 1])
 end
 
+AiClient.base64Encode = base64Encode
+
 local function decodeJson(text)
     local ok, value = pcall(function()
         return Json.decode(text)
@@ -176,7 +178,13 @@ function AiClient.reviewPreview(
         { field = "Content-Type", value = "application/json" },
     }
 
-    local responseBody, responseHeaders = LrHttp.post(settings.endpointUrl, body, headers, settings.timeoutSeconds)
+    local responseBody, responseHeaders = LrHttp.post(
+        settings.endpointUrl,
+        body,
+        headers,
+        "POST",
+        settings.timeoutSeconds
+    )
     if not responseBody then
         return nil, "StockReviewAI server did not return a response"
             .. "; endpoint=" .. Utils.safeString(settings.endpointUrl)

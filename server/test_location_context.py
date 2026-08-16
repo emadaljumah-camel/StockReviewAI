@@ -443,7 +443,8 @@ class LightroomLocationContractTests(unittest.TestCase):
         self.assertIn("pcall(function()", self.plugin_main)
         self.assertIn("Utils.logger:warn", self.plugin_main)
         self.assertIn("locationContext", self.plugin_main)
-        self.assertIn("AiClient.reviewPreview", self.plugin_main)
+        self.assertIn("JobClient.submit", self.plugin_main)
+        self.assertIn("location_context = locationContext", self.plugin_main)
 
     def test_location_object_is_conditionally_transmitted(self):
         self.assertIn("if locationContext then", self.plugin_client)

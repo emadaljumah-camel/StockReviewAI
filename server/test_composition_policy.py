@@ -22,6 +22,7 @@ from prompt import SYSTEM_PROMPT
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_MAIN = PROJECT_ROOT / "StockReviewAI.lrplugin" / "StockReviewAI.lua"
+PLUGIN_CHECK = PROJECT_ROOT / "StockReviewAI.lrplugin" / "CheckJobStatus.lua"
 NORMALIZED_SYSTEM_PROMPT = " ".join(SYSTEM_PROMPT.split())
 
 
@@ -919,13 +920,16 @@ class CompositionRegressionTests(unittest.TestCase):
         self.assertEqual(finalization.response.score, 62)
         self.assertEqual(finalization.response.verdict, "NO")
 
-    def test_operational_failure_path_precedes_lightroom_flag_write(self):
+    def test_completed_job_is_validated_before_lightroom_flag_write(self):
+        source = PLUGIN_CHECK.read_text(encoding="utf-8")
+        validation = source.index("validateCompletedResult(")
+        apply_results = source.index("applyResults(", validation)
+        self.assertLess(validation, apply_results)
+
+    def test_submission_does_not_write_lightroom_flags(self):
         source = PLUGIN_MAIN.read_text(encoding="utf-8")
-        review_call = source.index("AiClient.reviewPreview")
-        failed_result = source.index("if not result then", review_call)
-        apply_flag = source.index("applyFlag", failed_result)
-        self.assertLess(review_call, failed_result)
-        self.assertLess(failed_result, apply_flag)
+        self.assertIn("JobClient.submit", source)
+        self.assertNotIn('setRawMetadata("pickStatus"', source)
 
 
 if __name__ == "__main__":

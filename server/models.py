@@ -192,6 +192,8 @@ class LMStudioSettings(BaseModel):
 
 class ServerSettings(BaseModel):
     log_file: str = "StockReviewAI.server.log"
+    jobs_dir: str = "jobs"
+    max_job_workers: StrictInt = Field(default=1, ge=1)
 
 
 class GeocodingSettings(BaseModel):

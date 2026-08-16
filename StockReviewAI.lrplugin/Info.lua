@@ -13,6 +13,10 @@ return {
             file = "ReviewSelected.lua",
         },
         {
+            title = "Check Job Status / Apply Results",
+            file = "CheckJobStatus.lua",
+        },
+        {
             title = "Open Stock Review AI Settings",
             file = "OpenSettings.lua",
         },
@@ -22,5 +26,5 @@ return {
         },
     },
 
-    VERSION = { major = 1, minor = 0, revision = 0, build = 1 },
+    VERSION = { major = 1, minor = 1, revision = 0, build = 1 },
 }

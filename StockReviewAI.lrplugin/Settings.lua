@@ -2,6 +2,7 @@ local LrBinding = import "LrBinding"
 local LrDialogs = import "LrDialogs"
 local LrFunctionContext = import "LrFunctionContext"
 local LrPrefs = import "LrPrefs"
+local LrPathUtils = import "LrPathUtils"
 local LrView = import "LrView"
 
 local Settings = {}
@@ -17,6 +18,10 @@ Settings.defaults = {
     minimumYesThreshold = 70,
     writeLog = true,
     overwriteFlags = false,
+    jobRoot = LrPathUtils.child(
+        LrPathUtils.getStandardFilePath("documents"),
+        "StockReviewAI Jobs"
+    ),
 }
 
 function Settings.ensureDefaults()
@@ -38,6 +43,7 @@ function Settings.get()
         minimumYesThreshold = tonumber(PREFS.minimumYesThreshold) or Settings.defaults.minimumYesThreshold,
         writeLog = not not PREFS.writeLog,
         overwriteFlags = not not PREFS.overwriteFlags,
+        jobRoot = PREFS.jobRoot or Settings.defaults.jobRoot,
     }
 end
 
@@ -64,6 +70,7 @@ function Settings.showDialog()
         props.minimumYesThreshold = tostring(PREFS.minimumYesThreshold)
         props.writeLog = PREFS.writeLog
         props.overwriteFlags = PREFS.overwriteFlags
+        props.jobRoot = PREFS.jobRoot or Settings.defaults.jobRoot
 
         local contents = f:column {
             bind_to_object = props,
@@ -72,6 +79,10 @@ function Settings.showDialog()
             f:row {
                 f:static_text { title = "Server review URL", width = 160 },
                 f:edit_field { value = LrView.bind("endpointUrl"), width_in_chars = 52, immediate = true },
+            },
+            f:row {
+                f:static_text { title = "Local job storage", width = 160 },
+                f:edit_field { value = LrView.bind("jobRoot"), width_in_chars = 52, immediate = true },
             },
             f:row {
                 f:static_text { title = "Preview max long edge", width = 160 },
@@ -111,6 +122,7 @@ function Settings.showDialog()
             PREFS.minimumYesThreshold = math.max(0, math.min(100, tonumber(props.minimumYesThreshold) or Settings.defaults.minimumYesThreshold))
             PREFS.writeLog = not not props.writeLog
             PREFS.overwriteFlags = not not props.overwriteFlags
+            PREFS.jobRoot = props.jobRoot ~= "" and props.jobRoot or Settings.defaults.jobRoot
         end
     end)
 end

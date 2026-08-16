@@ -8,6 +8,7 @@ venv/
 *.log
 server/StockReviewAI.server.log
 StockReviewAI.lrplugin/StockReviewAI.log
+server/jobs/
 
 # OS/editor noise
 .DS_Store

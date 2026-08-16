@@ -1,11 +1,13 @@
 # StockReviewAI Lightroom Plugin
 
-StockReviewAI reviews the currently selected Lightroom Classic photos with a local FastAPI review server, then maps the server verdict to Lightroom flags:
+StockReviewAI submits selected Lightroom Classic photos to a durable FastAPI
+background job, then maps the completed server verdicts to Lightroom flags:
 
 - `YES` => Pick flag
 - `NO` => Rejected flag
 
-It creates temporary JPEG previews only. It does not modify original files and does not move folders.
+It creates persistent job JPEG previews for upload and recovery. It does not
+modify original image files or move folders.
 
 ## Project Layout
 
@@ -18,13 +20,17 @@ StockReviewAI/
 ## Lightroom Plugin Files
 
 - `Info.lua` - Lightroom plugin manifest and Library > Plug-in Extras menu items
-- `StockReviewAI.lua` - selected-photo workflow, preview generation, progress, and flagging
-- `AiClient.lua` - base64 JPEG upload to the StockReviewAI FastAPI server and response validation
+- `StockReviewAI.lua` - preview export and durable job submission
+- `JobClient.lua` - create, upload, run, status, and result requests
+- `JobState.lua` - persistent local job manifest and active-job state
+- `CheckJobStatus.lua` - progress, resume, result validation, and flag application
+- `AiClient.lua` - shared JPEG encoding and response validation
 - `Json.lua` - bundled Lua 5.1 JSON encoder/decoder used when Lightroom has no JSON namespace
 - `Prompt.lua` - legacy stock-review prompt kept for backwards compatibility
 - `Settings.lua` - plugin preferences dialog backed by `LrPrefs`
 - `Utils.lua` - logging and shared helpers
-- `ReviewSelected.lua`, `OpenSettings.lua`, `ClearLog.lua` - menu command entry points
+- `ReviewSelected.lua`, `CheckJobStatus.lua`, `OpenSettings.lua`, and
+  `ClearLog.lua` - menu command entry points
 
 ## Lightroom Install
 
@@ -97,12 +103,78 @@ Set:
 - minimum YES threshold, default `70`
 - plugin log writing
 - overwrite existing Lightroom flags
+- local durable job storage folder
 
 LM Studio endpoint, model name, prompt, JSON schema mode, JSON validation, retries, and inference logging are configured in the FastAPI server, not Lightroom.
 
 The threshold is sent as a JSON integer to the server. The AI returns only a
 structured assessment; deterministic server code calculates the score and
 returns the authoritative `verdict`.
+
+## Durable Background Jobs
+
+The Lightroom command exports and uploads the complete selection, asks the
+desktop server to queue it, records the job locally, and then returns. Once the
+submission dialog says it is safe to disconnect, Lightroom and the laptop do
+not need to remain running or connected while the desktop processes the job.
+
+The desktop stores each job under `server/jobs/<job-id>/`:
+
+```text
+job.json
+status.json
+uploads.json
+checkpoint.json
+previews/
+result.json
+```
+
+Each completed photo is checkpointed. A server restart changes an unfinished
+job to `interrupted`; `Check Job Status / Apply Results` can resume it without
+reviewing completed photos again. Repeated create, upload, and run requests are
+safe, so a connection failure during submission can also be resumed.
+
+Lightroom applies no flags during submission and never applies a partial job.
+After completion it downloads and validates the entire result, caches it as
+`completed_result.json`, verifies the original catalog and photo identities,
+and applies the flags in one catalog write. Once downloaded, a failed flag
+application can be retried without contacting the server.
+
+Only one active Lightroom job is tracked at a time. Apply the active job before
+submitting another. Local job folders and desktop server job folders are kept
+for recovery and are not automatically deleted.
+
+Server job storage and concurrency are configured in `server/config.yaml`:
+
+```yaml
+server:
+  log_file: "StockReviewAI.server.log"
+  jobs_dir: "jobs"
+  max_job_workers: 1
+```
+
+## Laptop and Desktop Setup
+
+When Lightroom is on a laptop and the backend is on a desktop, start Uvicorn on
+the desktop's LAN interface:
+
+```bat
+.venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8001
+```
+
+Set the Lightroom server review URL to the desktop hostname or fixed LAN IP,
+including the legacy `/review` suffix. The job client derives the other routes
+from it:
+
+```text
+http://DESKTOP-NAME:8001/review
+```
+
+Allow TCP port `8001` through the desktop firewall only for trusted/private
+networks. The laptop must remain connected until all previews are acknowledged
+and the server reports the job queued. The desktop and LM Studio must remain on
+while processing. Reconnect briefly to check or download the result; after the
+result is cached locally, applying it does not require the network.
 
 ## Decision Policy
 
@@ -301,8 +373,12 @@ Startup directory: D:\Projects\StockReviewAI\server
 
 1. Select one or more photos in Lightroom Library.
 2. Run `Library > Plug-in Extras > Review Selected Photos for Stock AI`.
-3. Watch the progress dialog.
-4. Review the final summary and log.
+3. Wait for every preview to upload and for the safe-to-disconnect message.
+4. Disconnect or turn off the laptop if desired.
+5. Later, reconnect and run
+   `Library > Plug-in Extras > Check Job Status / Apply Results`.
+6. If processing was interrupted, choose `Resume Job`.
+7. When complete, review the Lightroom flag summary and log.
 
 The log is written beside the plugin as:
 
@@ -314,18 +390,21 @@ Use `Library > Plug-in Extras > Clear AI Review Log` to delete it.
 
 ## Testing Checklist
 
-1. Enable dry-run mode and test one selected photo.
-2. Confirm no Lightroom flag changes in dry-run.
-3. Disable dry-run and test one selected photo.
-4. Confirm `YES` photos become Pick and `NO` photos become Rejected.
-5. Test 10 mixed photos.
-6. Disable overwrite and confirm existing Pick/Rejected flags are preserved.
-7. Stop the FastAPI server or LM Studio and confirm errors are logged without flag changes.
-8. Confirm original files are not modified.
+1. Enable dry-run mode, submit one photo, and confirm submission changes no flag.
+2. Check while running and confirm progress is reported without flag changes.
+3. Apply the completed dry-run and confirm no Lightroom flag changes.
+4. Disable dry-run and confirm completed `YES` and `NO` results become Pick and Reject.
+5. Disconnect the laptop after queue acknowledgement and confirm the desktop completes the job.
+6. Interrupt and restart the server, then confirm the job resumes from its checkpoint.
+7. Interrupt an upload and confirm the status command uploads only missing previews.
+8. Disable overwrite and confirm existing Pick/Rejected flags are preserved.
+9. Confirm original files are not modified.
 
 ## Notes
 
-- Flag changes are performed inside `catalog:withWriteAccessDo`.
-- Work runs through `LrTasks.startAsyncTask`.
-- Temporary previews are exported JPEG renditions with max long edge constraints.
-- Invalid server or model JSON results are logged and leave the photo unchanged.
+- Flag changes are performed inside one `catalog:withWriteAccessDo` operation.
+- Lightroom work runs through `LrTasks.startAsyncTask`; model inference runs in
+  the desktop server's durable background worker.
+- Job previews are JPEG renditions with max-long-edge constraints and retained
+  for recovery.
+- Invalid or incomplete results leave every Lightroom flag unchanged.

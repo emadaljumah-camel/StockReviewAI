@@ -6,6 +6,8 @@ lmstudio:
 
 server:
   log_file: "StockReviewAI.server.log"
+  jobs_dir: "jobs"
+  max_job_workers: 1
 
 geocoding:
   reverse_url: "https://nominatim.openstreetmap.org/reverse"
