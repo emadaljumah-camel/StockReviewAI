@@ -69,10 +69,50 @@ end
 
 function Utils.clearLog()
     local path = Utils.logPath()
-    if LrFileUtils.exists(path) then
-        LrFileUtils.delete(path)
+
+    if not LrFileUtils.exists(path) then
+        LrDialogs.message(
+            "Stock Review AI",
+            "AI review log is already empty:\n" .. path,
+            "info"
+        )
+        return true
     end
-    LrDialogs.message("Stock Review AI", "AI review log cleared:\n" .. path, "info")
+
+    local file, openError = io.open(path, "w")
+    if not file then
+        LrDialogs.message(
+            "Stock Review AI",
+            "Could not clear AI review log:\n"
+                .. path
+                .. "\n\n"
+                .. Utils.safeString(openError),
+            "critical"
+        )
+        return false, openError
+    end
+    file:close()
+
+    local attributes = LrFileUtils.fileAttributes(path)
+    if attributes.fileSize ~= 0 then
+        local message = "Log file was not empty after truncation"
+        LrDialogs.message(
+            "Stock Review AI",
+            "Could not clear AI review log:\n"
+                .. path
+                .. "\n\n"
+                .. message,
+            "critical"
+        )
+        return false, message
+    end
+
+    LrDialogs.message(
+        "Stock Review AI",
+        "AI review log cleared:\n" .. path,
+        "info"
+    )
+    return true
 end
 
 function Utils.fileToString(path)

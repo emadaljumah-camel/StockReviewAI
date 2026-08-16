@@ -41,7 +41,12 @@ async def health() -> dict[str, str]:
 @app.post("/review", response_model=ReviewResponse)
 async def review(request: ReviewRequest) -> ReviewResponse:
     try:
-        return await review_with_lmstudio(request, CONFIG.lmstudio, LOGGER)
+        return await review_with_lmstudio(
+            request,
+            CONFIG.lmstudio,
+            LOGGER,
+            CONFIG.geocoding,
+        )
     except ReviewError as exc:
         LOGGER.error("review_failed filename=%s error=%s", request.filename, str(exc))
         raise HTTPException(status_code=502, detail=str(exc)) from exc

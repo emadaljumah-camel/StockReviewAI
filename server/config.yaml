@@ -6,3 +6,9 @@ lmstudio:
 
 server:
   log_file: "StockReviewAI.server.log"
+
+geocoding:
+  reverse_url: "https://nominatim.openstreetmap.org/reverse"
+  user_agent: "StockReviewAI/1.0"
+  timeout_seconds: 8
+  minimum_interval_seconds: 1

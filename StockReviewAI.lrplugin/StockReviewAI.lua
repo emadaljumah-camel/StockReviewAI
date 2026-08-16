@@ -13,6 +13,52 @@ local Utils = require "Utils"
 
 local Plugin = {}
 
+local LOCATION_METADATA_FIELDS = {
+    { requestKey = "country", metadataKey = "country" },
+    {
+        requestKey = "state_or_province",
+        metadataKey = "stateProvince",
+    },
+    { requestKey = "city", metadataKey = "city" },
+    { requestKey = "sublocation", metadataKey = "location" },
+}
+
+local function trimmedString(value)
+    if type(value) ~= "string" then
+        return nil
+    end
+
+    local trimmed = value:match("^%s*(.-)%s*$")
+    if trimmed == "" then
+        return nil
+    end
+    return trimmed
+end
+
+local function readLocationContext(photo)
+    local ok, resultOrError = pcall(function()
+        local context = {}
+        local hasValue = false
+
+        for _, field in ipairs(LOCATION_METADATA_FIELDS) do
+            local value = trimmedString(
+                photo:getFormattedMetadata(field.metadataKey)
+            )
+            if value then
+                context[field.requestKey] = value
+                hasValue = true
+            end
+        end
+
+        return hasValue and context or nil
+    end)
+
+    if not ok then
+        return nil, tostring(resultOrError)
+    end
+    return resultOrError
+end
+
 local function selectedPhotos(catalog)
     local target = catalog:getTargetPhotos()
     if target and #target > 0 then
@@ -60,7 +106,9 @@ local function generatePreview(photo, settings, index)
             LR_export_useSubfolder = false,
             LR_format = "JPEG",
             LR_jpeg_quality = settings.jpegQuality / 100,
-            LR_minimizeEmbeddedMetadata = true,
+            LR_minimizeEmbeddedMetadata = false,
+            LR_removeLocationMetadata = false,
+            LR_embeddedMetadataOption = "all",
             LR_outputSharpeningOn = false,
             LR_renamingTokensOn = true,
             LR_tokens = uniqueName,
@@ -172,7 +220,22 @@ function Plugin.reviewSelectedPhotos()
                     return nil, previewError
                 end
 
-                local result, aiError = AiClient.reviewPreview(generatedPath, settings, LrPathUtils.leafName(path))
+                local locationContext, locationError =
+                    readLocationContext(photo)
+                if locationError then
+                    Utils.logger:warn(
+                        path
+                            .. ": optional location metadata unavailable: "
+                            .. locationError
+                    )
+                end
+
+                local result, aiError = AiClient.reviewPreview(
+                    generatedPath,
+                    settings,
+                    LrPathUtils.leafName(path),
+                    locationContext
+                )
                 if not result then
                     return nil, aiError
                 end

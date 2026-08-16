@@ -135,22 +135,43 @@ function AiClient.validateResult(result)
     return true
 end
 
-local function buildBody(settings, filename, jpegBase64)
-    return {
+local function buildBody(
+    settings,
+    filename,
+    jpegBase64,
+    locationContext
+)
+    local body = {
         filename = filename,
         image_base64 = jpegBase64,
         threshold = settings.minimumYesThreshold,
     }
+
+    if locationContext then
+        body.location_context = locationContext
+    end
+
+    return body
 end
 
-function AiClient.reviewPreview(previewPath, settings, filename)
+function AiClient.reviewPreview(
+    previewPath,
+    settings,
+    filename,
+    locationContext
+)
     local jpegData, readError = Utils.fileToString(previewPath)
     if not jpegData then
         return nil, readError
     end
 
     local jpegBase64 = base64Encode(jpegData)
-    local body = Json.encode(buildBody(settings, filename or previewPath, jpegBase64))
+    local body = Json.encode(buildBody(
+        settings,
+        filename or previewPath,
+        jpegBase64,
+        locationContext
+    ))
     local headers = {
         { field = "Content-Type", value = "application/json" },
     }
