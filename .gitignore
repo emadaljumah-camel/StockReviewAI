@@ -1,14 +1,101 @@
-# Python
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+!.env.template
+*.local.yaml
+*.local.yml
+config.local.yaml
+config.local.yml
+/server/config.yaml
+
+# Python environments and caches
 __pycache__/
 *.py[cod]
 .venv/
 venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
 
-# Logs and local runtime output
+# Logs
 *.log
-server/StockReviewAI.server.log
-StockReviewAI.lrplugin/StockReviewAI.log
-server/jobs/
+
+# Coverage and test output
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+test-output/
+test-results/
+
+# Build and packaging output
+build/
+dist/
+*.egg-info/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# StockReviewAI runtime data and generated media
+/server/jobs/
+/server/runtime/
+/server/photos/
+/server/previews/
+/server/generated/
+/server/output/
+
+# Local databases and production data
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+/data/
+/production-data/
+/production_data/
+/server/data/
+/server/production-data/
+/server/production_data/
+
+# AI models, weights, and checkpoints
+/models/
+/weights/
+/checkpoints/
+/model-cache/
+/model_cache/
+/server/models/
+/server/weights/
+/server/checkpoints/
+/server/model-cache/
+/server/model_cache/
+*.gguf
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Camera RAW files
+*.[Aa][Rr][Ww]
+*.[Cc][Rr]2
+*.[Cc][Rr]3
+*.[Dd][Nn][Gg]
+*.[Nn][Ee][Ff]
+*.[Nn][Rr][Ww]
+*.[Oo][Rr][Ff]
+*.[Pp][Ee][Ff]
+*.[Rr][Aa][Ff]
+*.[Rr][Ww]2
+*.[Ss][Rr][Ww]
 
 # OS/editor noise
 .DS_Store

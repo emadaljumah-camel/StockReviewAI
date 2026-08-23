@@ -43,6 +43,16 @@ StockReviewAI/
 
 ## StockReviewAI Server
 
+After cloning, create the local server configuration:
+
+```bat
+cd server
+copy config.example.yaml config.yaml
+```
+
+`config.yaml` is local machine configuration and is intentionally ignored by
+Git. Edit it as needed for the local LM Studio and server environment.
+
 The Lightroom plugin sends previews to:
 
 ```text
