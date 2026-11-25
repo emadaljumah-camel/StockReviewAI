@@ -1,6 +1,8 @@
 import base64
+import hashlib
 import json
 import logging
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -14,6 +16,7 @@ from location_context import (
     strip_jpeg_metadata_base64,
 )
 from models import (
+    CompositionCorrectability,
     CompositionDefect,
     CompositionDefectSeverity,
     EditorialEvidence,
@@ -234,6 +237,7 @@ def apply_composition_policy(
     severity: CompositionDefectSeverity,
     main_subject_type: MainSubjectType,
     foreground_dominates_frame: bool,
+    composition_correctability: CompositionCorrectability,
     composition_defects: Sequence[CompositionDefect] = (),
 ) -> CompositionPolicyResult:
     raw_defects = tuple(composition_defects)
@@ -300,6 +304,18 @@ def apply_composition_policy(
     ):
         effective_severity = CompositionDefectSeverity.MAJOR
         severity_escalation_reason = "three_or_more_distinct_defects"
+
+    # Correctability takes precedence over every automatic escalation.
+    if (
+        composition_correctability != CompositionCorrectability.NOT_NORMALLY_CORRECTABLE
+        and effective_severity in {
+            CompositionDefectSeverity.MAJOR, CompositionDefectSeverity.SEVERE
+        }
+    ):
+        effective_severity = CompositionDefectSeverity.MINOR
+        severity_escalation_reason = (
+            f"correctability_cap_{composition_correctability.value}"
+        )
 
     composition_deduction = 0
     route_deduction = 0
@@ -415,6 +431,7 @@ def composition_log_fields(
     policy: CompositionPolicyResult,
 ) -> dict[str, int | str | bool]:
     return {
+        "composition_correctability": assessment.composition_correctability.value,
         "raw_composition_score": policy.raw_composition_score,
         "effective_composition_score": policy.effective_composition_score,
         "raw_composition_defect_severity": (
@@ -503,6 +520,7 @@ def finalize_assessment_result(
         main_subject_type=assessment.main_subject_type,
         foreground_dominates_frame=assessment.foreground_dominates_frame,
         composition_defects=assessment.composition_defects,
+        composition_correctability=assessment.composition_correctability,
     )
     release_sensitive_editorial_failure = (
         restriction == "editorial_only"
@@ -598,6 +616,34 @@ def _choice_content(response: dict[str, Any]) -> str:
     return content
 
 
+def _build_validation_correction_payload(
+    payload: dict[str, Any],
+    invalid_content: str,
+    validation_error: str,
+) -> dict[str, Any]:
+    correction_prompt = (
+        "The JSON assessment above is structurally valid but failed the "
+        "application validator. Correct only the reported inconsistencies. "
+        "Keep all otherwise valid assessment values and the original image "
+        "context. Return JSON only, matching the schema.\n\n"
+        f"Exact validation error:\n{validation_error}"
+    )
+    return {
+        **payload,
+        "messages": [
+            *payload["messages"],
+            {"role": "assistant", "content": invalid_content},
+            {"role": "user", "content": correction_prompt},
+        ],
+    }
+
+
+def _response_diagnostic(content: str) -> tuple[str, str]:
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    excerpt = " ".join(content.strip().split())[:512]
+    return digest, excerpt
+
+
 def _build_payload(
     request: ReviewRequest,
     settings: LMStudioSettings,
@@ -613,6 +659,8 @@ def _build_payload(
     return {
         "model": settings.model,
         "temperature": 0,
+        **({"reasoning_effort": settings.reasoning_effort}
+           if settings.reasoning_effort is not None else {}),
         "response_format": {
             "type": "json_schema",
             "json_schema": {
@@ -651,6 +699,8 @@ async def review_with_lmstudio(
     settings: LMStudioSettings,
     logger: logging.Logger,
     geocoding_settings: GeocodingSettings | None = None,
+    *,
+    diagnostics: dict[str, Any] | None = None,
 ) -> ReviewResponse:
     try:
         resolved_location = await resolve_location_context(
@@ -685,12 +735,31 @@ async def review_with_lmstudio(
         location_context=resolved_location.context,
         location_context_source=resolved_location.source,
     )
+    current_payload = payload
+    correction_payload: dict[str, Any] | None = None
     last_error: Exception | None = None
 
+    if diagnostics is not None:
+        diagnostics.update(attempts=[], reasoning_effort=settings.reasoning_effort)
+
     for attempt in range(settings.retries + 1):
+        attempt_type = (
+            "corrective_validation"
+            if correction_payload is not None
+            else "ordinary"
+        )
+        response_model: str | None = None
+        content: str | None = None
+        attempt_started = time.perf_counter()
+        attempt_diagnostic: dict[str, Any] = {"attempt": attempt + 1, "success": False}
+        if diagnostics is not None:
+            diagnostics["attempts"].append(attempt_diagnostic)
         try:
             async with httpx.AsyncClient(timeout=settings.timeout_seconds) as client:
-                response = await client.post(settings.endpoint, json=payload)
+                response = await client.post(
+                    settings.endpoint,
+                    json=current_payload,
+                )
                 if response.status_code >= 400:
                     error_body = response.text.strip()[:1000]
                     raise ReviewError(
@@ -698,6 +767,29 @@ async def review_with_lmstudio(
                     )
 
             raw = response.json()
+            attempt_diagnostic["duration_seconds"] = time.perf_counter() - attempt_started
+            usage = raw.get("usage") or {}
+            attempt_diagnostic["usage"] = usage
+            logger.info(
+                "lmstudio_usage filename=%s reasoning_effort=%s attempt=%s "
+                "duration_seconds=%.3f prompt_tokens=%s completion_tokens=%s reasoning_tokens=%s",
+                request.filename, settings.reasoning_effort or "default", attempt + 1,
+                attempt_diagnostic["duration_seconds"], usage.get("prompt_tokens"),
+                usage.get("completion_tokens"),
+                (usage.get("completion_tokens_details") or {}).get("reasoning_tokens"),
+            )
+            response_model_value = raw.get("model")
+            if isinstance(response_model_value, str):
+                response_model = response_model_value
+                attempt_diagnostic["response_model"] = response_model
+            logger.info(
+                "lmstudio_attempt configured_model=%s response_model=%s "
+                "attempt_type=%s attempt=%s generation=temperature:0",
+                settings.model,
+                response_model or "unreported",
+                attempt_type,
+                attempt + 1,
+            )
             content = _choice_content(raw)
             parsed = json.loads(_strip_json_fence(content))
             assessment = ModelAssessment.model_validate(parsed)
@@ -706,6 +798,13 @@ async def review_with_lmstudio(
                 request.threshold,
                 resolved_location.context,
             )
+            attempt_diagnostic["success"] = True
+            if diagnostics is not None:
+                diagnostics["assessment"] = assessment.model_dump(mode="json")
+                diagnostics["composition_policy"] = composition_log_fields(
+                    assessment, finalization.composition_policy
+                )
+                diagnostics["release_restriction"] = finalization.release_restriction
             result = finalization.response
             restriction = finalization.release_restriction
             market_basis = finalization.selected_market_basis
@@ -736,6 +835,7 @@ async def review_with_lmstudio(
                 "location_state_or_province=%s location_city=%s "
                 "location_sublocation=%s release_restriction=%s "
                 "selected_market_basis=%s technical_score=%s "
+                "composition_correctability=%s "
                 "raw_composition_score=%s effective_composition_score=%s "
                 "raw_composition_defect_severity=%s "
                 "effective_composition_defect_severity=%s "
@@ -767,6 +867,7 @@ async def review_with_lmstudio(
                 restriction,
                 market_basis,
                 assessment.technical_score,
+                composition_log["composition_correctability"],
                 composition_log["raw_composition_score"],
                 composition_log["effective_composition_score"],
                 composition_log["raw_composition_defect_severity"],
@@ -800,11 +901,45 @@ async def review_with_lmstudio(
                 "; ".join(result.issues),
             )
             return result
-        except (httpx.HTTPError, json.JSONDecodeError, ValidationError, ReviewError) as exc:
+        except ValidationError as exc:
+            attempt_diagnostic["error"] = str(exc)
+            attempt_diagnostic["duration_seconds"] = time.perf_counter() - attempt_started
+            last_error = exc
+            invalid_content = content or "<response content unavailable>"
+            digest, excerpt = _response_diagnostic(invalid_content)
+            validation_error = str(exc)
+            logger.warning(
+                "review_attempt_failed filename=%s configured_model=%s "
+                "response_model=%s attempt_type=%s attempt=%s "
+                "generation=temperature:0 validation_error=%s "
+                "response_sha256=%s response_excerpt=%s",
+                request.filename,
+                settings.model,
+                response_model or "unreported",
+                attempt_type,
+                attempt + 1,
+                validation_error,
+                digest,
+                excerpt,
+            )
+            correction_payload = _build_validation_correction_payload(
+                payload,
+                invalid_content,
+                validation_error,
+            )
+            current_payload = correction_payload
+        except (httpx.HTTPError, json.JSONDecodeError, ReviewError) as exc:
+            attempt_diagnostic["error"] = str(exc)
+            attempt_diagnostic["duration_seconds"] = time.perf_counter() - attempt_started
             last_error = exc
             logger.warning(
-                "review_attempt_failed filename=%s attempt=%s error=%s",
+                "review_attempt_failed filename=%s configured_model=%s "
+                "response_model=%s attempt_type=%s attempt=%s "
+                "generation=temperature:0 error=%s",
                 request.filename,
+                settings.model,
+                response_model or "unreported",
+                attempt_type,
                 attempt + 1,
                 str(exc),
             )

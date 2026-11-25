@@ -16,6 +16,7 @@ JobStatus = Literal[
     "created",
     "running",
     "completed",
+    "cancelled",
     "failed",
     "interrupted",
 ]

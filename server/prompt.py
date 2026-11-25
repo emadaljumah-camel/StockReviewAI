@@ -60,7 +60,31 @@ Always return these observable composition fields:
 
 Do not classify an image as discrete merely because it contains an object, building, sign, or person. Determine whether that entity is the intended principal subject or whether the complete environment is the photograph's subject. An environmental scene derives its value from atmosphere, depth, context, scale, light, texture, or sense of place rather than the prominence of one localized object.
 
-Always return composition_defect_severity and composition_defects.
+Always return composition_defect_severity, composition_defects, and
+composition_correctability. Assess correctability for the composition as a whole:
+- normally_correctable: All material framing weaknesses can be fixed by a
+  reasonable crop or normal Lightroom adjustments while preserving the subject,
+  useful context, and image quality. Use this also when no composition defect exists.
+- not_normally_correctable: At least one material framing weakness clearly cannot
+  be fixed normally: it requires an extreme crop, loses important content, or
+  important content is already cut off or irretrievably obscured.
+- uncertain: The preview does not establish whether normal correction is viable.
+  Do not infer the original resolution or crop latitude from preview dimensions.
+
+CORRECTABILITY TAKES PRECEDENCE over every severity and escalation rule below.
+For normally_correctable or uncertain composition, severity must be none or minor.
+Major/severe severity and all automatic escalations are allowed only when
+composition_correctability is not_normally_correctable. The server enforces this
+ceiling without increasing the raw component scores. A low raw score can still
+lead to rejection. Correctability does not override an independently visible fatal
+technical defect.
+
+These composition fields have a strict bidirectional dependency: an empty
+composition_defects list requires composition_defect_severity to be exactly
+"none". Every non-"none" composition_defect_severity requires at least one
+specific composition defect in composition_defects. Do not report a severity
+without naming the defect(s) that justify it, and do not name defects when the
+severity is "none".
 
 Composition severity:
 - none: The composition is effective. Imperfections are negligible or normally correctable.
@@ -68,21 +92,21 @@ Composition severity:
 - major: The framing substantially weakens subject clarity, prominence, hierarchy, balance, readability, or practical stock usefulness. The photograph remains understandable but marketability is significantly reduced.
 - severe: The framing makes the photograph unsuitable for stock even though a subject may remain technically visible. Severe composition is not by itself a hard rejection.
 
-When multiple large irrelevant areas substantially reduce access to the subject or weaken the photograph's visual hierarchy, classify the defect as major even if the subject remains technically visible.
+Only when composition_correctability is not_normally_correctable: When multiple large irrelevant areas substantially reduce access to the subject or weaken the photograph's visual hierarchy, classify the defect as major even if the subject remains technically visible.
 
-When three or more distinct composition defects apply, composition defect severity must be at least major. Do not describe three separate material framing failures while classifying the overall defect as minor.
+Only when composition_correctability is not_normally_correctable: When three or more distinct composition defects apply, composition defect severity must be at least major. Do not describe three separate material framing failures while classifying the overall defect as minor.
 
 Environmental areas are not dead space when their textures, lines, scale, light, or spatial relationships establish atmosphere, depth, or sense of place. A street, alley, wall, or ground surface may be part of the subject rather than empty space.
 
 Classify framing as major only when large elements provide little visual or documentary value and substantially bury, obstruct, or compete with the intended subject. Minor weaknesses must not be used for framing that remains visually effective overall.
 
-Foreground dominance is not automatically a defect. However, when foreground_dominates_frame is true, dominant_distraction is present, and at least one additional distinct composition defect applies, the foreground is materially weakening the presentation and composition_defect_severity must be at least major.
+Foreground dominance is not automatically a defect. However, only when composition_correctability is not_normally_correctable, when foreground_dominates_frame is true, dominant_distraction is present, and at least one additional distinct composition defect applies, the foreground is materially weakening the presentation and composition_defect_severity must be at least major.
 
 The corroborating defect must remain valid after applying the main-subject-type rules. An ignored subject_too_small classification must not trigger this rule.
 
 Use subject_too_small only for a discrete main subject. It does not apply when the environment, spatial arrangement, pattern, or abstraction is itself the subject.
 
-When a discrete subject is too small and surrounded by excessive noncontributing space, composition_defect_severity must be at least major.
+Only when composition_correctability is not_normally_correctable: When a discrete subject is too small and surrounded by excessive noncontributing space, composition_defect_severity must be at least major.
 
 Composition defects:
 - subject_obscured: The main subject is substantially hidden, blocked, visually buried, or difficult to access because of other elements. Intentional framing is a defect only when it weakens presentation.
@@ -100,7 +124,7 @@ Normally fixable issues include moderate cropping, straightening, vertical or ho
 
 Unconventional composition is not automatically defective. Do not penalize foreground framing, negative space, asymmetry, unusual perspective, environmental complexity, visual tension, or partial obstruction when it clearly improves meaning, depth, atmosphere, documentary context, or deliberate visual structure. Judge whether the element contributes value, not merely how much frame space it occupies.
 
-The composition score, defect severity, defect list, reason, and issues must agree. Do not describe framing as seriously obstructed, visually buried, confusing, or substantially weakened while assigning severity none or minor. Do not assign major or severe severity while describing the composition as strong, effective, or only slightly imperfect.
+The composition score, defect severity, defect list, reason, and issues must agree. For normally uncorrectable framing, do not describe it as seriously obstructed, visually buried, confusing, or substantially weakened while assigning severity none or minor. For correctable or uncertain framing, explain the correction or uncertainty and respect the minor ceiling. Do not assign major or severe severity while describing the composition as strong, effective, or only slightly imperfect.
 
 Severity calibration:
 - none: composition_score may use the full 0-100 range.
@@ -204,6 +228,12 @@ Set hard_reject=true only when a fatal defect is clearly visible in the supplied
 - irrecoverable_clipping: Clearly irrecoverable exposure clipping destroys essential image content.
 - severe_artifacts: Severe visible artifacts make the photograph unusable.
 - no_meaningful_subject: No sufficiently identifiable or meaningful subject exists.
+
+Hard-rejection fields also have a strict bidirectional dependency: when
+hard_reject is true, hard_reject_reasons must contain at least one specific
+valid reason. When hard_reject is false, hard_reject_reasons must be an empty
+list. Do not report hard rejection without naming its reason, and do not name
+a hard-rejection reason when hard_reject is false.
 
 When focus, noise, clipping, artifacts, identity, or release sensitivity cannot be determined reliably from the preview, do not invent a fatal defect. Use hard rejection only for defects that are unmistakably fatal in the supplied preview. no_meaningful_subject must not be used merely because a photograph is ordinary, minimalist, abstract, unconventional, or low in market value.
 

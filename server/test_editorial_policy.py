@@ -37,6 +37,7 @@ def assessment_data(**overrides):
         "main_subject_visibility": "clear",
         "foreground_dominates_frame": False,
         "composition_defect_severity": "none",
+        "composition_correctability": "not_normally_correctable",
         "composition_defects": [],
         "human_activity_readability": "clear",
         "editorial_evidence": [],

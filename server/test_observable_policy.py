@@ -13,6 +13,7 @@ from lmstudio_client import (
     release_restriction,
 )
 from models import (
+    CompositionCorrectability,
     EditorialEvidence,
     HumanActivityReadability,
     MainSubjectVisibility,
@@ -34,6 +35,7 @@ def assessment_data(**overrides):
         "main_subject_visibility": "clear",
         "foreground_dominates_frame": False,
         "composition_defect_severity": "none",
+        "composition_correctability": "not_normally_correctable",
         "composition_defects": [],
         "human_activity_readability": "clear",
         "editorial_evidence": ["meaningful_human_activity"],
@@ -93,6 +95,7 @@ class CompositionObservableCompatibilityTests(unittest.TestCase):
             foreground_dominates_frame=True,
         )
         policy = apply_composition_policy(
+            composition_correctability=CompositionCorrectability.NOT_NORMALLY_CORRECTABLE,
             raw_composition_score=value.composition_score,
             raw_route_value=70,
             severity=value.composition_defect_severity,
@@ -111,6 +114,7 @@ class CompositionObservableCompatibilityTests(unittest.TestCase):
             human_activity_readability="incidental",
         )
         policy = apply_composition_policy(
+            composition_correctability=CompositionCorrectability.NOT_NORMALLY_CORRECTABLE,
             raw_composition_score=value.composition_score,
             raw_route_value=70,
             severity=value.composition_defect_severity,
@@ -122,6 +126,7 @@ class CompositionObservableCompatibilityTests(unittest.TestCase):
         self.assertEqual(
             composition_log_fields(value, policy),
             {
+                "composition_correctability": "not_normally_correctable",
                 "raw_composition_score": 68,
                 "effective_composition_score": 68,
                 "raw_composition_defect_severity": "none",

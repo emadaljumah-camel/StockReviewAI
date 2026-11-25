@@ -96,6 +96,9 @@ lmstudio:
   retries: 2
 ```
 
+The server loads this configuration at startup. Restart the server after
+changing the LM Studio model or any other server setting.
+
 ## Plugin Settings
 
 Open Lightroom's Plug-in Manager and select `02 Stock Review AI`, then click:
@@ -107,7 +110,7 @@ Open Settings...
 Set:
 
 - server review URL
-- preview max long edge, default `1280`
+- preview max long edge, default `1536`
 - JPEG quality, default `75`
 - timeout seconds
 - dry-run mode
@@ -144,6 +147,11 @@ Each completed photo is checkpointed. A server restart changes an unfinished
 job to `interrupted`; `Check Job Status / Apply Results` can resume it without
 reviewing completed photos again. Repeated create, upload, and run requests are
 safe, so a connection failure during submission can also be resumed.
+
+Use `Library > Plug-in Extras > Cancel Active Job` to stop an unfinished job
+and release the active-job lock without applying its results. Cancellation is
+terminal and cannot be resumed; locally saved previews and any completed
+checkpoints are retained for troubleshooting.
 
 Lightroom applies no flags during submission and never applies a partial job.
 After completion it downloads and validates the entire result, caches it as
@@ -236,13 +244,25 @@ defects. The server applies one deterministic composition policy:
 - major: subtract `20` from composition and `10` from route value, then cap composition at `49` and route value at `64`
 - severe: subtract `40` from composition and `20` from route value, then cap composition at `29` and route value at `49`
 
+The model also returns `composition_correctability`:
+`normally_correctable`, `not_normally_correctable`, or `uncertain`.
+Correctability takes precedence over every severity escalation below. Only
+`not_normally_correctable` permits major/severe penalties. Correctable or
+uncertain framing is capped at minor; raw scores are not increased and fatal
+technical defects still reject. The assessment concerns the entire composition,
+not just one fixable defect, and must not infer original resolution from the preview.
+The server logs correctability and any severity adjustment. Older model responses
+without this required field are rejected and retried; saved final job results
+retain their existing format and are not rescored.
+
 Scores are clamped at zero. Logged deductions are the actual differences
 between raw and effective values, including any additional reduction caused by
 a cap.
 
 When the model reports three or more distinct composition defects, the server
 deterministically raises an effective severity of `none` or `minor` to `major`.
-Existing `major` and `severe` classifications are never lowered.
+Existing `major` and `severe` classifications are preserved only when the
+composition is `not_normally_correctable`.
 
 The model also classifies the main subject as `discrete`,
 `environmental_scene`, or `pattern_or_abstract`. The server ignores
@@ -417,6 +437,42 @@ In Lightroom's Plug-in Manager, select `02 Stock Review AI` and click
 - Flag changes are performed inside one `catalog:withWriteAccessDo` operation.
 - Lightroom work runs through `LrTasks.startAsyncTask`; model inference runs in
   the desktop server's durable background worker.
-- Job previews are JPEG renditions with max-long-edge constraints and retained
-  for recovery.
+- One Lightroom export session renders every selected preview. The plugin sends
+  each resulting 1536-pixel JPEG directly as `image/jpeg`; the server preserves
+  those bytes for recovery. The older Base64 upload endpoint remains available
+  for installed older plugins.
 - Invalid or incomplete results leave every Lightroom flag unchanged.
+
+## Reasoning benchmark
+
+`lmstudio.reasoning_effort` optionally sends `xhigh`, `medium`, or `low` with
+chat-completion requests. Omit it or use `null` to preserve model/server defaults.
+Support depends on the model and LM Studio runtime; verify the rendered model
+input with `lms log stream --source model --filter input --json` before interpreting
+a comparison. A successful HTTP response alone does not prove the setting applied.
+Per-attempt logs include elapsed request time and reported prompt, completion,
+and reasoning token counts; unavailable counts are not treated as zero.
+
+Run from the project root with the existing environment:
+
+```powershell
+server/.venv/Scripts/python.exe server/benchmark_reasoning.py server/jobs/JOB_ID
+```
+
+The benchmark samples 30 evenly spaced previews, resolves location once per pair,
+and compares explicit medium reasoning with low using the same corrected
+prompt, schema, preview, original threshold, and temperature. It alternates arm
+order, sends one request at a time, and waits while durable jobs are running.
+Do not start other LM Studio workloads during measurement. It does not change
+live settings, job results, or Lightroom flags. Output goes to
+`server/output/reasoning-benchmark/results.json` and `report.md`; existing inference results
+are never overwritten by a new run; an empty stopped run for the same job may be reused. Use `--output` for subsequent runs.
+
+All retries count toward timing. Results are persisted after each review, with
+incomplete or failed pairs excluded from verdict comparisons but retained in
+failure/timing statistics. This is a behavioral comparison without human labels,
+not an accuracy evaluation or a guarantee that medium is faster. Review changed
+verdicts and composition/release classifications before changing production settings.
+
+The benchmark also lists saved original-job scores and verdicts. Those may use an
+older composition policy; differences from them cannot isolate reasoning effects.

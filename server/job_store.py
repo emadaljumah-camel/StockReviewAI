@@ -107,6 +107,8 @@ class JobStore:
     ) -> None:
         with _STORE_LOCK:
             previous = self.get_status(job_id)
+            if previous.get("status") == "cancelled" and status != "cancelled":
+                return
             now = utc_now()
             started_at = previous.get("started_at")
             completed_at = previous.get("completed_at")
@@ -121,7 +123,9 @@ class JobStore:
                     "status": status,
                     "progress": progress.model_dump(),
                     "errors": previous.get("errors", []) if errors is None else errors,
-                    "resumable": status != "completed" if resumable is None else resumable,
+                    "resumable": status not in {"completed", "cancelled"}
+                    if resumable is None
+                    else resumable,
                     "created_at": previous.get("created_at", now),
                     "updated_at": now,
                     "started_at": started_at,
@@ -135,13 +139,21 @@ class JobStore:
         photo_id: str,
         image_base64: str,
     ) -> tuple[str, bool]:
-        request = self.get_request(job_id)
-        if photo_id not in {photo.photo_id for photo in request.photos}:
-            raise KeyError(photo_id)
         try:
             data = base64.b64decode(image_base64, validate=True)
         except (binascii.Error, ValueError) as exc:
             raise ValueError("Preview is not valid base64") from exc
+        return self.save_preview_bytes(job_id, photo_id, data)
+
+    def save_preview_bytes(
+        self,
+        job_id: str,
+        photo_id: str,
+        data: bytes,
+    ) -> tuple[str, bool]:
+        request = self.get_request(job_id)
+        if photo_id not in {photo.photo_id for photo in request.photos}:
+            raise KeyError(photo_id)
         if len(data) < 3 or data[:3] != b"\xff\xd8\xff":
             raise ValueError("Preview is not a JPEG image")
 

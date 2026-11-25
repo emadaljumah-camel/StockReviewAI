@@ -11,7 +11,7 @@ local PREFS = LrPrefs.prefsForPlugin()
 
 Settings.defaults = {
     endpointUrl = "http://localhost:8080/stockreview/review",
-    previewMaxLongEdge = 1280,
+    previewMaxLongEdge = 1536,
     jpegQuality = 75,
     timeoutSeconds = 120,
     dryRun = false,

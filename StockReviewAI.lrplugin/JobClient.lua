@@ -1,6 +1,6 @@
 local LrHttp = import "LrHttp"
+local LrDate = import "LrDate"
 
-local AiClient = require "AiClient"
 local Json = require "Json"
 local Utils = require "Utils"
 
@@ -50,6 +50,17 @@ local function post(settings, path, payload)
     return decodeResponse(body, headers)
 end
 
+local function postBytes(settings, path, data, contentType)
+    local body, headers = LrHttp.post(
+        jobBaseUrl(settings) .. path,
+        data,
+        { { field = "Content-Type", value = contentType } },
+        "POST",
+        settings.timeoutSeconds
+    )
+    return decodeResponse(body, headers)
+end
+
 local function get(settings, path)
     local body, headers = LrHttp.get(
         jobBaseUrl(settings) .. path,
@@ -73,10 +84,11 @@ function JobClient.upload(settings, jobId, photoId, previewPath)
     if not jpeg then
         return nil, readError
     end
-    return post(
+    return postBytes(
         settings,
-        "/jobs/" .. jobId .. "/photos/" .. photoId .. "/preview",
-        { image_base64 = AiClient.base64Encode(jpeg) }
+        "/jobs/" .. jobId .. "/photos/" .. photoId .. "/preview/binary",
+        jpeg,
+        "image/jpeg"
     )
 end
 
@@ -88,6 +100,10 @@ function JobClient.run(settings, jobId)
     return post(settings, "/jobs/" .. jobId .. "/run", {})
 end
 
+function JobClient.cancel(settings, jobId)
+    return post(settings, "/jobs/" .. jobId .. "/cancel", {})
+end
+
 function JobClient.status(settings, jobId)
     return get(settings, "/jobs/" .. jobId .. "/status")
 end
@@ -97,6 +113,7 @@ function JobClient.result(settings, jobId)
 end
 
 function JobClient.submit(settings, manifest, progress)
+    local startedAt = LrDate.currentTime()
     local created, createError = JobClient.create(settings, manifest)
     if not created then
         return nil, createError
@@ -134,7 +151,17 @@ function JobClient.submit(settings, manifest, progress)
             end
         end
     end
-    return JobClient.run(settings, jobId)
+    local response, runError = JobClient.run(settings, jobId)
+    if settings.writeLog then
+        Utils.appendLog(
+            os.date("%Y-%m-%d %H:%M:%S")
+                .. "\tupload"
+                .. "\tphotos=" .. tostring(#manifest.photos)
+                .. "\tseconds=" .. string.format("%.3f", LrDate.currentTime() - startedAt)
+                .. "\tstatus=" .. (response and "submitted" or "failed")
+        )
+    end
+    return response, runError
 end
 
 return JobClient

@@ -3,11 +3,15 @@ lmstudio:
   model: "qwen_qwen3-vl-32b-instruct"
   timeout_seconds: 120
   retries: 2
+  # Optional: xhigh, medium, or low; null leaves model/server defaults unchanged.
+  # Verify support with your LM Studio runtime before using.
+  reasoning_effort: null
 
 server:
   log_file: "StockReviewAI.server.log"
   jobs_dir: "jobs"
   max_job_workers: 1
+  photo_workers_per_job: 1
 
 geocoding:
   reverse_url: "https://nominatim.openstreetmap.org/reverse"

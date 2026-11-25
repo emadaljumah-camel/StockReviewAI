@@ -32,6 +32,7 @@ def assessment_data(**overrides):
         "main_subject_visibility": "clear",
         "foreground_dominates_frame": False,
         "composition_defect_severity": "none",
+        "composition_correctability": "not_normally_correctable",
         "composition_defects": [],
         "human_activity_readability": "clear",
         "editorial_evidence": [],
@@ -405,7 +406,10 @@ class EndpointCompatibilityTests(unittest.TestCase):
         )
         mocked_review = AsyncMock(return_value=response_result)
 
-        with patch("main.review_with_lmstudio", mocked_review):
+        with (
+            patch("main.review_with_lmstudio", mocked_review),
+            patch("main.JOB_STORE.mark_running_jobs_interrupted", return_value=[]),
+        ):
             with TestClient(app) as client:
                 response = client.post(
                     "/review",
@@ -428,7 +432,10 @@ class EndpointCompatibilityTests(unittest.TestCase):
     def test_string_threshold_is_rejected_at_endpoint(self):
         mocked_review = AsyncMock()
 
-        with patch("main.review_with_lmstudio", mocked_review):
+        with (
+            patch("main.review_with_lmstudio", mocked_review),
+            patch("main.JOB_STORE.mark_running_jobs_interrupted", return_value=[]),
+        ):
             with TestClient(app) as client:
                 response = client.post(
                     "/review",

@@ -2,7 +2,6 @@ local LrApplication = import "LrApplication"
 local LrDate = import "LrDate"
 local LrDialogs = import "LrDialogs"
 local LrExportSession = import "LrExportSession"
-local LrFileUtils = import "LrFileUtils"
 local LrPathUtils = import "LrPathUtils"
 local LrProgressScope = import "LrProgressScope"
 local LrTasks = import "LrTasks"
@@ -74,12 +73,20 @@ local function selectedPhotos(catalog)
     return {}
 end
 
-local function generatePreview(photo, settings, index, previewDir)
-    local uniqueName = "stock-review-ai-" .. tostring(math.floor(LrDate.currentTime())) .. "-" .. tostring(index)
+local function exportKey(photo, fallback)
+    local identifier = photo.localIdentifier
+    if identifier ~= nil then
+        return "local-" .. tostring(identifier)
+    end
+    local uuid = trimmedString(photo:getRawMetadata("uuid"))
+    return uuid or ("position-" .. tostring(fallback))
+end
+
+local function generatePreviews(photos, settings, previewDir, progress)
     local exportSession = LrExportSession {
-        photosToExport = { photo },
+        photosToExport = photos,
         exportSettings = {
-            LR_collisionHandling = "overwrite",
+            LR_collisionHandling = "rename",
             LR_exportServiceProvider = "com.adobe.ag.export.file",
             LR_export_destinationType = "specificFolder",
             LR_export_destinationPathPrefix = previewDir,
@@ -91,7 +98,8 @@ local function generatePreview(photo, settings, index, previewDir)
             LR_embeddedMetadataOption = "all",
             LR_outputSharpeningOn = false,
             LR_renamingTokensOn = true,
-            LR_tokens = uniqueName,
+            LR_initialSequenceNumber = 1,
+            LR_tokens = "stock-review-ai-{{naming_sequenceNumber_5Digits}}",
             LR_size_doConstrain = true,
             LR_size_maxHeight = settings.previewMaxLongEdge,
             LR_size_maxWidth = settings.previewMaxLongEdge,
@@ -100,17 +108,29 @@ local function generatePreview(photo, settings, index, previewDir)
         },
     }
 
-    local renditionPath
+    local previews = {}
+    local rendered = 0
     for _, rendition in exportSession:renditions { stopIfCanceled = true } do
+        if progress:isCanceled() then
+            return nil, "Export canceled. No job was submitted."
+        end
         local success, pathOrMessage = rendition:waitForRender()
-        if success then
-            renditionPath = pathOrMessage
-        else
+        if not success then
             return nil, pathOrMessage or "Lightroom could not render a preview for this photo"
         end
+        rendered = rendered + 1
+        local key = exportKey(rendition.photo, rendered)
+        if previews[key] then
+            return nil, "Lightroom returned duplicate previews for a selected photo"
+        end
+        previews[key] = pathOrMessage
+        progress:setPortionComplete(rendered * 45 / #photos, 100)
     end
 
-    return renditionPath
+    if rendered ~= #photos then
+        return nil, "Lightroom did not render every selected photo"
+    end
+    return previews
 end
 
 local function photoPath(photo)
@@ -167,6 +187,24 @@ function Plugin.reviewSelectedPhotos()
             server_photos = {},
         }
 
+        local exportStartedAt = LrDate.currentTime()
+        progress:setCaption("Exporting " .. tostring(#photos) .. " previews...")
+        local previews, previewError = generatePreviews(photos, settings, previewDir, progress)
+        if not previews then
+            progress:done()
+            LrDialogs.message("Stock Review AI export error", previewError, "critical")
+            return
+        end
+        if settings.writeLog then
+            Utils.appendLog(
+                os.date("%Y-%m-%d %H:%M:%S")
+                    .. "\texport"
+                    .. "\tphotos=" .. tostring(#photos)
+                    .. "\tseconds=" .. string.format("%.3f", LrDate.currentTime() - exportStartedAt)
+                    .. "\tmax_long_edge=" .. tostring(settings.previewMaxLongEdge)
+            )
+        end
+
         for index, photo in ipairs(photos) do
             if progress:isCanceled() then
                 progress:done()
@@ -174,18 +212,10 @@ function Plugin.reviewSelectedPhotos()
             end
 
             local path = photoPath(photo)
-            progress:setPortionComplete(index - 1, #photos)
-            progress:setCaption("Exporting " .. tostring(index) .. " of " .. tostring(#photos) .. ": " .. LrPathUtils.leafName(path))
-
-            local generatedPath, previewError = generatePreview(
-                photo,
-                settings,
-                index,
-                previewDir
-            )
+            local generatedPath = previews[exportKey(photo, index)]
             if not generatedPath then
                 progress:done()
-                LrDialogs.message("Stock Review AI export error", previewError, "critical")
+                LrDialogs.message("Stock Review AI export error", "A preview could not be matched to " .. LrPathUtils.leafName(path), "critical")
                 return
             end
             local locationContext, locationError = readLocationContext(photo)

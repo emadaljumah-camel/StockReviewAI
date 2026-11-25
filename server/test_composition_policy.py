@@ -11,6 +11,7 @@ from lmstudio_client import (
     finalize_assessment_result,
 )
 from models import (
+    CompositionCorrectability,
     CompositionDefect,
     CompositionDefectSeverity,
     LocationContext,
@@ -36,6 +37,7 @@ def assessment_data(**overrides):
         "main_subject_visibility": "clear",
         "foreground_dominates_frame": False,
         "composition_defect_severity": "none",
+        "composition_correctability": "not_normally_correctable",
         "composition_defects": [],
         "human_activity_readability": "none",
         "editorial_evidence": [],
@@ -118,6 +120,88 @@ class CompositionSchemaTests(unittest.TestCase):
         self.assertNotIn("composition_defects", response)
 
 
+class CorrectabilityPolicyTests(unittest.TestCase):
+    def test_correctable_and_uncertain_gate_every_escalation(self):
+        scenarios = [
+            (["subject_too_small", "excessive_dead_space"], False),
+            (["dominant_distraction", "awkward_overlaps"], True),
+            (["subject_obscured", "awkward_overlaps", "poor_visual_balance"], False),
+            (["accidental_crop"], False),
+        ]
+        for correctability in CompositionCorrectability:
+            for severity in ("minor", "major", "severe"):
+                for defects, foreground in scenarios:
+                    with self.subTest(correctability=correctability, severity=severity, defects=defects):
+                        value = assessment(
+                            composition_score=75, commercial_value_score=75,
+                            composition_correctability=correctability,
+                            composition_defect_severity=severity,
+                            composition_defects=defects,
+                            foreground_dominates_frame=foreground,
+                        )
+                        policy = finalize_assessment_result(value, 70).composition_policy
+                        if correctability != CompositionCorrectability.NOT_NORMALLY_CORRECTABLE:
+                            self.assertEqual(policy.effective_composition_defect_severity.value, "minor")
+                            self.assertEqual(policy.effective_composition_score, 69)
+                            self.assertEqual(policy.effective_route_value, 75)
+                            self.assertEqual(policy.raw_composition_score, 75)
+                            if severity != "minor" or len(defects) > 1:
+                                self.assertEqual(policy.severity_escalation_reason, f"correctability_cap_{correctability.value}")
+                            else:
+                                self.assertIsNone(policy.severity_escalation_reason)
+                        elif severity != "minor" or len(defects) > 1:
+                            self.assertIn(policy.effective_composition_defect_severity.value, ("major", "severe"))
+
+    def test_correctability_never_increases_low_scores_or_overrides_hard_reject(self):
+        for correctability in CompositionCorrectability:
+            result = finalize_assessment(assessment(
+                composition_correctability=correctability,
+                composition_score=30, commercial_value_score=30,
+                composition_defect_severity="major", composition_defects=["dominant_distraction"],
+            ), 70)
+            self.assertEqual(result.verdict, "NO")
+            result = finalize_assessment(assessment(
+                composition_correctability=correctability,
+                technical_score=90, composition_score=90, commercial_value_score=90,
+                hard_reject=True, hard_reject_reasons=["missed_focus"],
+            ), 70)
+            self.assertEqual(result.verdict, "NO")
+
+    def test_correctability_changes_penalty_not_raw_scores(self):
+        results = {}
+        for correctability in CompositionCorrectability:
+            value = assessment(
+                technical_score=80, composition_score=75, commercial_value_score=75,
+                editorial_value_score=40, composition_defect_severity="major",
+                composition_defects=["dominant_distraction"],
+                composition_correctability=correctability,
+            )
+            results[correctability.value] = finalize_assessment(value, 70)
+            self.assertEqual(value.composition_score, 75)
+        self.assertEqual(results["normally_correctable"].score, 75)
+        self.assertEqual(results["uncertain"].verdict, "YES")
+        self.assertEqual(results["not_normally_correctable"].score, 66)
+        self.assertEqual(results["not_normally_correctable"].verdict, "NO")
+
+    def test_missing_or_invalid_correctability_is_rejected(self):
+        data = assessment_data()
+        del data["composition_correctability"]
+        with self.assertRaises(ValidationError):
+            ModelAssessment.model_validate(data)
+        with self.assertRaises(ValidationError):
+            assessment(composition_correctability="probably")
+
+    def test_ignored_defects_remain_none(self):
+        for correctability in CompositionCorrectability:
+            policy = finalize_assessment_result(assessment(
+                composition_correctability=correctability,
+                main_subject_type="environmental_scene", composition_score=75,
+                composition_defect_severity="major", composition_defects=["subject_too_small"],
+            ), 70).composition_policy
+            self.assertEqual(policy.effective_composition_defect_severity.value, "none")
+            self.assertEqual(policy.effective_composition_score, 75)
+
+
 class CompositionPolicyTests(unittest.TestCase):
     def policy(
         self,
@@ -129,6 +213,7 @@ class CompositionPolicyTests(unittest.TestCase):
         foreground_dominates=False,
     ):
         return apply_composition_policy(
+            composition_correctability=CompositionCorrectability.NOT_NORMALLY_CORRECTABLE,
             raw_composition_score=composition,
             raw_route_value=route,
             severity=CompositionDefectSeverity(severity),
@@ -410,6 +495,7 @@ class CompositionPolicyTests(unittest.TestCase):
             composition_defects=["subject_too_small"],
         )
         policy = apply_composition_policy(
+            composition_correctability=CompositionCorrectability.NOT_NORMALLY_CORRECTABLE,
             raw_composition_score=value.composition_score,
             raw_route_value=70,
             severity=value.composition_defect_severity,

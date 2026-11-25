@@ -57,6 +57,12 @@ class CompositionDefectSeverity(str, Enum):
     SEVERE = "severe"
 
 
+class CompositionCorrectability(str, Enum):
+    NORMALLY_CORRECTABLE = "normally_correctable"
+    NOT_NORMALLY_CORRECTABLE = "not_normally_correctable"
+    UNCERTAIN = "uncertain"
+
+
 class CompositionDefect(str, Enum):
     SUBJECT_OBSCURED = "subject_obscured"
     SUBJECT_TOO_SMALL = "subject_too_small"
@@ -125,6 +131,7 @@ class ModelAssessment(BaseModel):
     foreground_dominates_frame: StrictBool
     composition_defect_severity: CompositionDefectSeverity
     composition_defects: list[CompositionDefect]
+    composition_correctability: CompositionCorrectability
     human_activity_readability: HumanActivityReadability
     editorial_evidence: list[EditorialEvidence]
     recognizable_people: StrictBool
@@ -188,12 +195,14 @@ class LMStudioSettings(BaseModel):
     model: str = "local-model"
     timeout_seconds: float = Field(default=120, gt=0)
     retries: int = Field(default=2, ge=0)
+    reasoning_effort: Literal["xhigh", "medium", "low"] | None = None
 
 
 class ServerSettings(BaseModel):
     log_file: str = "StockReviewAI.server.log"
     jobs_dir: str = "jobs"
     max_job_workers: StrictInt = Field(default=1, ge=1)
+    photo_workers_per_job: StrictInt = Field(default=1, ge=1)
 
 
 class GeocodingSettings(BaseModel):

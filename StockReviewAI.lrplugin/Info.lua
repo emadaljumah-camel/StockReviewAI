@@ -17,6 +17,10 @@ return {
             title = "Check Job Status / Apply Results",
             file = "CheckJobStatus.lua",
         },
+        {
+            title = "Cancel Active Job",
+            file = "CancelJob.lua",
+        },
     },
 
     VERSION = { major = 1, minor = 1, revision = 0, build = 2 },
